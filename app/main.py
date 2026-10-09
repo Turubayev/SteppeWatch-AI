@@ -35,10 +35,17 @@ extent = z["extent"].tolist() if "extent" in z and z["extent"].tolist() != [0, 1
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Площадь", f"{summary['area_km2']:,.0f} км²".replace(",", " "))
-c2.metric("ЦУР 15.3.1: деградировано", f"{summary['sdg_15_3_1']['sdg_15_3_1_percent']:.1f} %")
+sdg_summary=summary['sdg_15_3_1']
+sdg_value=sdg_summary.get('sdg_15_3_1_percent') if 'status' in sdg_summary else None
+def percent(value):
+    return f'{value:.1f} %' if isinstance(value,(int,float)) and np.isfinite(value) else 'Нет полного расчёта'
+c2.metric('ЦУР 15.3.1 (упрощённый расчёт)', percent(sdg_value))
+if sdg_value is None:
+    st.info('Для полного показателя нужны покров и SOC. Старые результаты нужно пересчитать; отсутствие данных не означает стабильность.')
+
 pct = summary["restrend_classes_percent"]
-c3.metric("Деградация, не объясняемая осадками", f"{pct[CLASS_LABELS[-2]]:.1f} %")
-c4.metric("Снижение из-за засухи", f"{pct[CLASS_LABELS[-1]]:.1f} %")
+c3.metric('Снижение после поправки на осадки', percent(pct.get(CLASS_LABELS[-2], pct.get('деградация (не объясняется осадками)'))))
+c4.metric('Снижение без значимого остаточного тренда', percent(pct.get(CLASS_LABELS[-1], pct.get('снижение из-за засухи'))))
 
 import matplotlib  # noqa: E402
 
@@ -86,12 +93,12 @@ right.bar_chart(ts["Осадки, мм"])
 right.caption(f"Медианный R² связи NDVI с осадками: {summary['median_r2_ndvi_vs_precip']}. "
               "Чем он выше, тем важнее поправка на засуху.")
 
-st.subheader("ЦУР 15.3.1 (методика UNCCD, «один против всех»)")
+st.subheader("ЦУР 15.3.1 (упрощённый расчёт, «один против всех»)")
 sdg = summary["sdg_15_3_1"]
 st.table(pd.DataFrame({
     "Показатель": ["Деградировано, км²", "Улучшилось, км²", "Всего, км²", "Доля деградированных, %",
                    "— по продуктивности, %", "— по покрову, %", "— по почвенному углероду, %"],
-    "Значение": [sdg["degraded_km2"], sdg["improved_km2"], sdg["total_km2"], sdg["sdg_15_3_1_percent"],
+    "Значение": [sdg["degraded_km2"], sdg["improved_km2"], sdg["total_km2"], sdg_value,
                  *sdg["by_subindicator_percent"].values()],
 }))
 st.subheader("Классы RESTREND, км²")

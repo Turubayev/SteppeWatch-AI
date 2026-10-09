@@ -39,6 +39,7 @@ def mann_kendall(y: np.ndarray, axis: int = 0) -> dict[str, np.ndarray]:
     z = np.where(s > 0, (s - 1) / np.sqrt(np.maximum(var, 1e-12)),
                  np.where(s < 0, (s + 1) / np.sqrt(np.maximum(var, 1e-12)), 0.0))
     p = 2 * (1 - norm.cdf(np.abs(z)))
+    p = np.where(n >= 3, p, np.nan)
     dt = (j - i).reshape((-1,) + (1,) * (y.ndim - 1))
     slopes = np.where(valid, d / dt, np.nan)
     slope = np.nanmedian(slopes, axis=0)
@@ -62,7 +63,18 @@ def _lstsq_per_pixel(X: np.ndarray, y: np.ndarray):
     return coef, fit
 
 
-def restrend(ndvi: np.ndarray, precip: np.ndarray, lag: bool = True, alpha: float = 0.05) -> dict[str, np.ndarray]:
+def fdr_bh(pvalues):
+    """Benjamini–Hochberg q-values. NaNs remain unknown."""
+    p = np.asarray(pvalues,float);flat=p.ravel();ok=np.isfinite(flat)
+    if ((flat[ok]<0)|(flat[ok]>1)).any():raise ValueError('p-values must be in [0,1]')
+    q=np.full(flat.shape,np.nan);idx=np.flatnonzero(ok);order=np.argsort(flat[idx]);n=len(idx)
+    if n:
+        adjusted=flat[idx[order]]*n/np.arange(1,n+1)
+        q[idx[order]]=np.clip(np.minimum.accumulate(adjusted[::-1])[::-1],0,1)
+    return q.reshape(p.shape)
+
+
+def restrend(ndvi: np.ndarray, precip: np.ndarray, lag: bool = True, alpha: float = 0.05, fdr: bool = False) -> dict[str, np.ndarray]:
     """RESTREND. ndvi: (T, H, W) годовой показатель (например, средний NDVI вегетационного сезона),
     precip: (T, H, W) или (T,) годовые осадки (мм). Возвращает карты наклона остатков, p-value,
     R² связи с осадками и класс:
@@ -90,13 +102,16 @@ def restrend(ndvi: np.ndarray, precip: np.ndarray, lag: bool = True, alpha: floa
     mk_res = mann_kendall(resid)
     mk_raw = mann_kendall(y)
     cls = np.zeros(P)
-    sig_res = mk_res["p"] < alpha
+    resid_q = fdr_bh(mk_res['p']) if fdr else mk_res['p']
+    raw_q = fdr_bh(mk_raw['p']) if fdr else mk_raw['p']
+    sig_res = resid_q < alpha
     cls[sig_res & (mk_res["slope"] < 0)] = -2
     cls[sig_res & (mk_res["slope"] > 0)] = 1
-    cls[~sig_res & (mk_raw["p"] < alpha) & (mk_raw["slope"] < 0)] = -1
+    cls[~sig_res & (raw_q < alpha) & (mk_raw["slope"] < 0)] = -1
     cls[~np.isfinite(mk_res["slope"])] = np.nan
     return {
         "resid_slope": mk_res["slope"].reshape(shape), "resid_p": mk_res["p"].reshape(shape),
+        "resid_q": resid_q.reshape(shape),
         "ndvi_slope": mk_raw["slope"].reshape(shape), "ndvi_p": mk_raw["p"].reshape(shape),
         "r2_precip": r2.reshape(shape), "class": cls.reshape(shape), "residuals": resid.reshape((T,) + shape),
         "precip_coef": coef[:, 1].reshape(shape),
@@ -109,4 +124,4 @@ def rue(ndvi: np.ndarray, precip: np.ndarray) -> np.ndarray:
     return ndvi / np.where(p > 0, p, np.nan) * 100
 
 
-CLASS_LABELS = {-2: "деградация (не объясняется осадками)", -1: "снижение из-за засухи", 0: "стабильно", 1: "улучшение"}
+CLASS_LABELS = {-2: "снижение после поправки на осадки (нужна наземная проверка)", -1: "снижение NDVI без значимого остаточного тренда", 0: "значимый тренд не обнаружен", 1: "рост после поправки на осадки"}

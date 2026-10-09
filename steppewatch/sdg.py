@@ -39,6 +39,9 @@ WORLDCOVER_TO_IPCC = {10: 1, 20: 2, 30: 2, 40: 3, 50: 5, 60: 6, 70: 6, 80: 7, 90
 
 def productivity(ndvi: np.ndarray, baseline_years: int, alpha: float = 0.05, units: np.ndarray | None = None) -> dict:
     """ndvi: (T, H, W) годовые значения. Первые baseline_years — базовый период."""
+    ndvi = np.asarray(ndvi, float)
+    if ndvi.ndim < 2 or not 3 <= baseline_years <= len(ndvi) - 3 or not 0 < alpha < 1:
+        raise ValueError('Need >=3 baseline years and >=3 subsequent years; alpha in (0,1)')
     mk = mann_kendall(ndvi)
     trajectory = np.where(mk["p"] < alpha, np.sign(mk["slope"]), 0)
     base = ndvi[:baseline_years]
@@ -56,39 +59,59 @@ def productivity(ndvi: np.ndarray, baseline_years: int, alpha: float = 0.05, uni
     lpd = np.zeros(mean_all.shape, np.int8)
     lpd[(trajectory > 0) | (state > 0)] = 1
     lpd[(trajectory < 0) | ((state < 0) & (performance < 0))] = -1
-    lpd[~np.isfinite(mean_all)] = -9
+    lpd[~np.isfinite(ndvi).all(axis=0)] = -9
     return {"trajectory": trajectory, "state": state, "performance": performance, "lpd": lpd, "z_state": z}
 
 
 def land_cover_change(lc_start: np.ndarray, lc_end: np.ndarray) -> np.ndarray:
     """Классы IPCC (1–7) на начало и конец → −1/0/+1 по матрице UNCCD."""
-    a = np.clip(np.asarray(lc_start, int), 1, 7) - 1
-    b = np.clip(np.asarray(lc_end, int), 1, 7) - 1
-    return LC_MATRIX[a, b]
+    a, b = np.broadcast_arrays(np.asarray(lc_start, float), np.asarray(lc_end, float))
+    valid = np.isin(a, np.arange(1,8)) & np.isin(b, np.arange(1,8))
+    out = np.full(a.shape, -9, dtype=np.int8)
+    out[valid] = LC_MATRIX[a[valid].astype(int)-1, b[valid].astype(int)-1]
+    return out
 
 
 def soc_change(soc_start: np.ndarray, soc_end: np.ndarray, threshold: float = 0.10) -> np.ndarray:
-    rel = (np.asarray(soc_end, float) - soc_start) / np.where(soc_start > 0, soc_start, np.nan)
-    return np.where(rel <= -threshold, -1, np.where(rel >= threshold, 1, 0))
+    if not 0 < threshold < 1: raise ValueError('SOC threshold must be in (0,1)')
+    start, end = np.broadcast_arrays(np.asarray(soc_start, float), np.asarray(soc_end, float))
+    valid = np.isfinite(start) & np.isfinite(end) & (start > 0) & (end >= 0)
+    rel = (end - start) / np.where(valid, start, np.nan)
+    return np.where(valid, np.where(rel <= -threshold, -1, np.where(rel >= threshold, 1, 0)), -9)
 
 
 def sdg_15_3_1(lpd: np.ndarray, lc: np.ndarray, soc: np.ndarray, pixel_area_km2: float | np.ndarray = 1.0,
                mask: np.ndarray | None = None) -> dict:
     """Итог: доля деградированных земель (вода исключается маской)."""
-    valid = (lpd != -9) if mask is None else (mask & (lpd != -9))
+    lpd = np.asarray(lpd)
+    lc = np.full(lpd.shape, -9) if lc is None else np.asarray(lc)
+    soc = np.full(lpd.shape, -9) if soc is None else np.asarray(soc)
+    if lc.shape != lpd.shape or soc.shape != lpd.shape: raise ValueError('Subindicator grids must match')
+    for a in (lpd,lc,soc):
+        if not np.isin(a,[-9,-1,0,1]).all(): raise ValueError('Subindicators must be -9,-1,0,1')
+    candidate = (lpd != -9) if mask is None else (np.asarray(mask,bool) & (lpd != -9))
+    valid = candidate & (lc != -9) & (soc != -9)
     degraded = ((lpd == -1) | (lc == -1) | (soc == -1)) & valid
     improved = ((lpd == 1) | (lc == 1) | (soc == 1)) & ~degraded & valid
     area = np.broadcast_to(pixel_area_km2, lpd.shape)
+    if not (np.isfinite(area) & (area > 0)).all(): raise ValueError('Pixel area must be finite and positive')
     total = float(area[valid].sum())
+    candidate_area = float(area[candidate].sum())
+    complete = bool(candidate.any() and (valid[candidate]).all())
+    screening = ((lpd == -1) | (lc == -1) | (soc == -1)) & candidate
     return {
         "degraded_km2": round(float(area[degraded].sum()), 1),
         "improved_km2": round(float(area[improved].sum()), 1),
         "total_km2": round(total, 1),
-        "sdg_15_3_1_percent": round(100 * float(area[degraded].sum()) / total, 2) if total else np.nan,
+        "sdg_15_3_1_percent": round(100 * float(area[degraded].sum()) / total, 2) if total and complete else None,
+        "status": "complete_subindicators_simplified_method" if complete else "incomplete_subindicators",
+        "coverage_percent": round(100 * total / candidate_area, 2) if candidate_area else 0.0,
+        "screening_degraded_percent": round(100 * float(area[screening].sum()) / candidate_area, 2) if candidate_area else None,
+        "note": "Screening is a lower bound from available subindicators; this simplified method is not a certified UNCCD report.",
         "by_subindicator_percent": {
-            "productivity": round(100 * float(area[(lpd == -1) & valid].sum()) / total, 2) if total else np.nan,
-            "land_cover": round(100 * float(area[(lc == -1) & valid].sum()) / total, 2) if total else np.nan,
-            "soc": round(100 * float(area[(soc == -1) & valid].sum()) / total, 2) if total else np.nan,
+            "productivity": round(100 * float(area[(lpd == -1) & valid].sum()) / total, 2) if total else None,
+            "land_cover": round(100 * float(area[(lc == -1) & valid].sum()) / total, 2) if total else None,
+            "soc": round(100 * float(area[(soc == -1) & valid].sum()) / total, 2) if total else None,
         },
         "degraded_mask": degraded,
     }

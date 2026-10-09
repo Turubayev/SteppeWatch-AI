@@ -31,21 +31,29 @@ def load_aoi(path: str | Path) -> tuple[dict, tuple[float, float, float, float],
 
 def analyze(years: np.ndarray, ndvi: np.ndarray, precip: np.ndarray, pixel_km2: float,
             baseline_years: int = 15, lc_start=None, lc_end=None, soc_start=None, soc_end=None) -> dict:
-    res = restrend(ndvi, precip)
+    years = np.asarray(years)
+    if len(years) != len(ndvi) or not len(years) or not np.all(np.diff(years) == 1):
+        raise ValueError('Annual cube requires consecutive increasing years')
+    if pixel_km2 <= 0 or not np.isfinite(pixel_km2): raise ValueError('Invalid pixel area')
+    if (lc_start is None) != (lc_end is None) or (soc_start is None) != (soc_end is None):
+        raise ValueError('Both start and end subindicator grids are required')
+    res = restrend(ndvi, precip, fdr=True)
     brk = break_map(res["residuals"], alpha=0.01, min_seg=4)
     # Переломы интересны там, где есть значимое изменение; в стабильных пикселях это шум.
     brk["break_index"] = np.where(np.isin(res["class"], (-2, 1)), brk["break_index"], np.nan)
     prod = productivity(ndvi, baseline_years)
-    lc = land_cover_change(lc_start, lc_end) if lc_start is not None else np.zeros(ndvi.shape[1:], int)
-    soc = soc_change(soc_start, soc_end) if soc_start is not None else np.zeros(ndvi.shape[1:], int)
+    lc = land_cover_change(lc_start, lc_end) if lc_start is not None else None
+    soc = soc_change(soc_start, soc_end) if soc_start is not None else None
     sdg = sdg_15_3_1(prod["lpd"], lc, soc, pixel_km2, mask=np.isfinite(ndvi).all(axis=0))
     cls = res["class"]
     valid = np.isfinite(cls)
     areas = {CLASS_LABELS[k]: round(float((cls == k).sum() * pixel_km2), 1) for k in CLASS_LABELS}
-    share = {k: round(100 * v / (valid.sum() * pixel_km2), 1) for k, v in areas.items()}
+    share = {k: round(100 * v / (valid.sum() * pixel_km2), 1) if valid.any() else None for k, v in areas.items()}
     by_year = {int(y): float(np.nanmean(ndvi[i])) for i, y in enumerate(years)}
     brk_years = brk["break_index"][np.isfinite(brk["break_index"])].astype(int)
     summary = {
+        "method_revision": 2,
+        "multiple_testing": "Benjamini-Hochberg FDR 0.05 on RESTREND/raw NDVI maps; spatial/temporal dependence still requires validation",
         "years": [int(years[0]), int(years[-1])],
         "area_km2": round(float(valid.sum() * pixel_km2), 1),
         "restrend_classes_km2": areas,
@@ -56,7 +64,7 @@ def analyze(years: np.ndarray, ndvi: np.ndarray, precip: np.ndarray, pixel_km2: 
         "mean_ndvi_by_year": by_year,
         "mean_precip_by_year": {int(y): float(np.nanmean(precip[i])) for i, y in enumerate(years)},
     }
-    maps = {"class": cls, "resid_slope": res["resid_slope"], "resid_p": res["resid_p"], "ndvi_slope": res["ndvi_slope"],
+    maps = {"class": cls, "resid_slope": res["resid_slope"], "resid_p": res["resid_p"], "resid_q":res['resid_q'], "ndvi_slope": res["ndvi_slope"],
             "r2_precip": res["r2_precip"], "break_index": brk["break_index"], "lpd": prod["lpd"],
             "sdg_degraded": sdg["degraded_mask"].astype(np.int8), "ndvi_mean": np.nanmean(ndvi, axis=0),
             "rue_mean": np.nanmean(rue(ndvi, precip), axis=0)}

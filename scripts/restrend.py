@@ -57,7 +57,7 @@ def main():
                 lc = gee.land_cover_soc(gj)
                 from steppewatch.sdg import WORLDCOVER_TO_IPCC
 
-                to_ipcc = np.vectorize(lambda v: WORLDCOVER_TO_IPCC.get(int(v), 6))
+                to_ipcc = np.vectorize(lambda v: WORLDCOVER_TO_IPCC.get(int(v), -9) if np.isfinite(v) else -9)
                 extra = {"lc_start": to_ipcc(lc["lc2020"]), "lc_end": to_ipcc(lc["lc2021"])}
             except Exception as e:  # noqa: BLE001
                 print("Покров/SOC не получены:", e)
