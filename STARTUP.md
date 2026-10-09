@@ -2,6 +2,8 @@
 
 Обновлено 9 октября 2026 года. Это подготовка заявки, не подтверждение участия.
 
+Основатель подтвердил: SteppeWatch-AI — самостоятельный проект. Месяц/год начала, клиенты и выручка ещё не уточнены; эти поля заявки не заполнены предположениями.
+
 ## Продукт
 
 SteppeWatch-AI — ранний проект спутникового мониторинга земель Казахстана. Он помогает находить участки для наземной проверки: изменения растительности с поправкой на осадки, возможное засоление и гари. Целевые пользователи — пастбищные хозяйства, экологические организации и специалисты по землепользованию. Они являются целевым сегментом, а не заявленными клиентами.
@@ -41,7 +43,7 @@ python scripts/claude_report.py results/kyzylorda.json --language English --send
 
 **What are you building?**
 
-SteppeWatch-AI is an early-stage project developing satellite land-monitoring tools for Kazakhstan. Our research prototype combines vegetation time series and precipitation-adjusted trend analysis to identify areas for field investigation. It includes a Python analysis pipeline, a local Streamlit dashboard, synthetic tests and a saved satellite-data example from the Aral region. We target pasture managers and environmental organizations; customer traction and commercial demand have not yet been validated. Screening signals are not proof of degradation or land-use violations, and the prototype does not produce a certified UNCCD report.
+SteppeWatch-AI is an independent, early-stage project developing satellite land-monitoring tools for Kazakhstan. Our research prototype combines vegetation time series and precipitation-adjusted trend analysis to identify areas for field investigation. It includes a Python analysis pipeline, a local Streamlit dashboard, synthetic tests and a saved satellite-data example from the Aral region. We target pasture managers and environmental organizations; customer traction and commercial demand have not yet been validated. Screening signals are not proof of degradation or land-use violations, and the prototype does not produce a certified UNCCD report.
 
 **How will you use Claude?**
 
